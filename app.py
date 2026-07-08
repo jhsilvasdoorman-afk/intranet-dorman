@@ -44,9 +44,6 @@ if not df_precios.empty:
 if "modulo_activo" not in st.session_state:
     st.session_state.modulo_activo = "🏠 Inicio / Dashboard"
 
-# Función para cambiar de módulo desde los botones del Dashboard
-function_cambiar_modulo = lambda nuevo_mod: st.session_state.update({"modulo_activo": nuevo_mod})
-
 # --- BARRA LATERAL (MENÚ COMPACTO) ---
 st.sidebar.title("🏢 DOORMAN OPERACIONES")
 st.sidebar.markdown(f"**Módulo actual:**\n`{st.session_state.modulo_activo}`")
@@ -82,7 +79,7 @@ if st.session_state.modulo_activo == "🏠 Inicio / Dashboard":
         
     st.markdown("---")
     
-    # --- BLOQUE DE ACCESO DIRECTO A MÓDULOS (TARJETAS/BOTONES) ---
+    # --- BLOQUE DE ACCESO DIRECTO A MÓDULOS ---
     st.subheader("🗂️ Acceso Rápido a Módulos")
     c_mod1, c_mod2 = st.columns(2)
     
@@ -194,3 +191,10 @@ elif st.session_state.modulo_activo == "🔍 Buscar/Consultar Edificios":
             st.dataframe(
                 df_filtrado_vista[["fecha", "material", "cantidad", "subtotal_format"]].rename(
                     columns={"fecha": "📅 Fecha", "material": "🔧 Componente", "cantidad": "📦 Cant.", "subtotal_format": "💰 Subtotal"}
+                ),
+                use_container_width=True
+            )
+            costo_acumulado = df_filtrado_vista["subtotal"].sum()
+            st.metric(label="Valor Total de Infraestructura", value=f"${costo_acumulado:,.0f}")
+    else:
+        st.info("Aún no tienes registros en tu historial de instalaciones.")
