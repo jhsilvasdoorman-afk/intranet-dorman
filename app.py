@@ -19,7 +19,7 @@ modulo = st.sidebar.radio(
     ["✨ Instalación Nueva", "🔍 Buscar/Consultar Edificios"]
 )
 
-# --- FUNCIÓN INTELIGENTE PARA TRAER DATOS ---
+# --- FUNCIÓN PARA TRAER DATOS ---
 @st.cache_data(ttl=2)  
 def cargar_datos_desde_google():
     try:
@@ -33,32 +33,32 @@ def cargar_datos_desde_google():
         pass
     return {"precios": [], "instalaciones": []}
 
-# Cargar datos desde el puente de Google
+# Cargar base de datos central
 datos_completos = cargar_datos_desde_google()
 catalogo_precios = datos_completos.get("precios", [])
 historial_edificios = datos_completos.get("instalaciones", [])
 
-# Creación de tablas seguras
 df_precios = pd.DataFrame(catalogo_precios) if catalogo_precios else pd.DataFrame()
 df_historial = pd.DataFrame(historial_edificios) if historial_edificios else pd.DataFrame()
 
-# Mapeo automático de columnas dinámicas para evitar cualquier KeyError
+# Identificar dinámicamente los nombres de tus columnas del Sheet maestro
 col_nombre_mat = "material"
 col_precio_mat = "precio"
 
 if not df_precios.empty:
-    # Si las columnas vienen con los nombres del Sheet original ("Equipo / Material", "Precio")
     columnas_reales = list(df_precios.columns)
     if len(columnas_reales) >= 2:
         col_nombre_mat = columnas_reales[0]
         col_precio_mat = columnas_reales[1]
 
 # =========================================================================
-# MÓDULO 1: INSTALACIÓN NUEVA
+# MÓDULO 1: INSTALACIÓN NUEVA (REDISEÑO: CUADRÍCULA DIRECTA)
 # =========================================================================
 if modulo == "✨ Instalación Nueva":
     st.header("🧰 Módulo: Registro de Instalación Nueva")
+    st.caption("Escribe el nombre del edificio y asigna las cantidades directamente sobre la lista completa de materiales.")
     
+    # Datos de Cabecera
     col_ed, col_fe = st.columns([2, 1])
     with col_ed:
         nombre_edificio = st.text_input("🏢 Nombre del Edificio / Condominio Nuevo:", placeholder="Ej: Condominio Altos del Valle")
@@ -68,78 +68,93 @@ if modulo == "✨ Instalación Nueva":
     st.markdown("---")
     
     if not df_precios.empty:
-        st.subheader("➕ Agregar Materiales y Equipos")
-        col_mat, col_cant, col_btn = st.columns([2, 1, 1])
+        st.subheader("📋 Catálogo Maestro de Materiales y Equipos")
+        st.info("💡 Solo escribe la cantidad al lado de los equipos que vayas a instalar. Los que queden en 0 se ignorarán.")
         
-        with col_mat:
-            lista_materiales = df_precios[col_nombre_mat].unique()
-            material_sel = st.selectbox("Seleccione el ítem del catálogo:", lista_materiales)
-        with col_cant:
-            cantidad_sel = st.number_input("Cantidad:", min_value=1, value=1, step=1)
-        with col_btn:
-            st.write("")
-            st.write("")
-            btn_agregar = st.button("🚀 Añadir Fila")
+        # Diccionario para almacenar las cantidades ingresadas por el usuario
+        cantidades_ingresadas = {}
+        items_a_guardar = []
+        total_acumulado = 0.0
 
-        if "carrito" not in st.session_state:
-            st.session_state.carrito = []
+        # Crear la cuadrícula de forma limpia y scannable
+        # Encabezados de la "tabla" manual
+        c_head1, c_head2, c_head3 = st.columns([3, 1, 1])
+        c_head1.markdown("**🔧 Descripción del Equipo / Material**")
+        c_head2.markdown("**💰 Precio Unitario**")
+        c_head3.markdown("**📦 Cantidad Usada**")
+        st.markdown("<hr style='margin:0px; padding:0px; border-top: 1px solid #ddd;'>", unsafe_allow_html=True)
 
-        if btn_agregar:
-            fila_item = df_precios[df_precios[col_nombre_mat] == material_sel].iloc[0]
+        # Desplegar fila por fila todo el catálogo de una vez
+        for index, fila in df_precios.iterrows():
+            material = fila[col_nombre_mat]
             try:
-                precio_uni = float(fila_item[col_precio_mat])
+                precio = float(fila[col_precio_mat])
             except:
-                precio_uni = 0.0
-                
-            st.session_state.carrito.append({
-                "fecha": str(fecha_instalacion),
-                "edificio": nombre_edificio,
-                "material": material_sel,
-                "cantidad": cantidad_sel,
-                "subtotal": precio_uni * cantidad_sel
-            })
-            st.toast(f"Añadido: {material_sel}")
+                precio = 0.0
+            
+            c_mat, c_pre, c_cant = st.columns([3, 1, 1])
+            
+            # Mostrar Nombre y Precio formateado
+            c_mat.write(material)
+            c_pre.write(f"${precio:,.0f}")
+            
+            # Campo numérico único por cada fila del catálogo
+            cantidad = c_cant.number_input(
+                label=f"Cant-{index}", 
+                min_value=0, 
+                value=0, 
+                step=1, 
+                label_visibility="collapsed"
+            )
+            
+            # Si el usuario colocó una cantidad mayor a 0, lo calculamos de inmediato
+            if cantidad > 0:
+                subtotal = precio * cantidad
+                total_acumulado += subtotal
+                items_a_guardar.append({
+                    "fecha": str(fecha_instalacion),
+                    "edificio": nombre_edificio,
+                    "material": material,
+                    "cantidad": cantidad,
+                    "subtotal": subtotal
+                })
+            
+            # Línea divisoria sutil entre filas
+            st.markdown("<hr style='margin:4px; padding:0px; border-top: 1px solid #f1f1f1;'>", unsafe_allow_html=True)
 
-        if st.session_state.carrito:
-            st.markdown("### 📋 Resumen de Elementos a Instalar")
-            df_actual = pd.DataFrame(st.session_state.carrito)
+        st.markdown("---")
+        
+        # Bloque de resumen y envío final
+        if items_a_guardar:
+            st.success(f"📋 Tienes **{len(items_a_guardar)}** ítems seleccionados para instalar.")
+            st.metric("💰 INVERSIÓN TOTAL DE LA OBRA", f"${total_acumulado:,.0f}")
             
-            df_vista = df_actual.copy()
-            df_vista["subtotal"] = df_vista["subtotal"].apply(lambda x: f"${x:,.0f}")
-            st.table(df_vista[["material", "cantidad", "subtotal"]])
+            if st.button("💾 GUARDAR TODO Y GENERAR REGISTROS", use_container_width=True, type="primary"):
+                if not nombre_edificio.strip():
+                    st.error("⚠️ Error: Debes ingresar el nombre del Edificio arriba antes de guardar.")
+                else:
+                    with st.spinner("Registrando instalación modular en la base de datos..."):
+                        payload = {
+                            "accion": "nueva_instalacion",
+                            "edificio": nombre_edificio,
+                            "elementos": items_a_guardar
+                        }
+                        try:
+                            envio = requests.post(APPS_SCRIPT_URL, json=payload)
+                            res = envio.json()
+                            if res.get("status") == "success" or res.get("status") == "ok":
+                                st.success(f"🎉 ¡Éxito! El edificio '{nombre_edificio}' se registró correctamente con todos sus componentes.")
+                                st.balloons()
+                            else:
+                                st.success(f"🎉 ¡Datos enviados y guardados correctamente en Google Drive!")
+                                st.balloons()
+                        except Exception as e:
+                            st.error(f"Error de comunicación con el servidor: {e}")
+        else:
+            st.warning("Escribe una cantidad mayor a 0 en cualquier ítem del catálogo para activar el botón de guardado.")
             
-            total_obra = df_actual["subtotal"].sum()
-            st.metric("💰 INVERSIÓN TOTAL ESTIMADA", f"${total_obra:,.0f}")
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("🗑️ Limpiar Planilla"):
-                    st.session_state.carrito = []
-                    st.rerun()
-            with c2:
-                if st.button("💾 GUARDAR INSTALACIÓN Y REGISTRAR EDIFICIO"):
-                    if not nombre_edificio.strip():
-                        st.error("⚠️ Debes asignar un nombre al Edificio antes de guardar.")
-                    else:
-                        with st.spinner("Guardando en el sistema central..."):
-                            payload = {
-                                "accion": "nueva_instalacion",
-                                "edificio": nombre_edificio,
-                                "elementos": st.session_state.carrito
-                            }
-                            try:
-                                envio = requests.post(APPS_SCRIPT_URL, json=payload)
-                                res = envio.json()
-                                if res.get("status") == "success" or res.get("status") == "ok":
-                                    st.success(f"🎉 ¡Éxito! Edificio '{nombre_edificio}' registrado correctamente.")
-                                    st.session_state.carrito = []
-                                else:
-                                    st.success(f"🎉 ¡Visita e Instalación enviadas correctamente al archivo central!")
-                                    st.session_state.carrito = []
-                            except Exception as e:
-                                st.error(f"Error de envío: {e}")
     else:
-        st.warning("⚠️ El catálogo de precios no se pudo leer. Revisa las pestañas de tu Google Sheets.")
+        st.warning("⚠️ No se pudo cargar el catálogo. Verifica que la pestaña 'Precios' tenga datos en Google Sheets.")
 
 # =========================================================================
 # MÓDULO 2: BUSCAR / CONSULTAR EDIFICIOS
@@ -169,4 +184,4 @@ elif modulo == "🔍 Buscar/Consultar Edificios":
             costo_acumulado = df_filtrado_vista["subtotal"].sum()
             st.metric(label="Valor Total de Infraestructura Instalada", value=f"${costo_acumulado:,.0f}")
     else:
-        st.info("ℹ️ No hay registros históricos guardados en la pestaña 'Instalaciones' todavía. ¡Prueba registrando tu primera instalación!")
+        st.info("ℹ️ No hay registros históricos en la pestaña 'Instalaciones' todavía. ¡Aparecerán automáticamente cuando guardes tu primera obra!")
