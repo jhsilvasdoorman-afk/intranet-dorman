@@ -16,38 +16,43 @@ st.markdown("---")
 st.sidebar.title("🗂️ Módulos del Sistema")
 modulo = st.sidebar.radio(
     "Selecciona el módulo en el que deseas trabajar:",
-    ["✨ Instalación Nueva", "🔍 Buscar/Consultar Edificios", "📦 Malla de Turnos / Inventario (Próximamente)"]
+    ["✨ Instalación Nueva", "🔍 Buscar/Consultar Edificios"]
 )
 
-# --- FUNCIÓN PARA TRAER DATOS DE GOOGLE ---
-@st.cache_data(ttl=10)  # Se actualiza rápido para ver los cambios
+# --- FUNCIÓN COMPROBADA PARA TRAER DATOS ---
+@st.cache_data(ttl=5)  
 def cargar_datos_desde_google():
     try:
-        respuesta = requests.get(APPS_SCRIPT_URL)
+        respuesta = requests.get(APPS_SCRIPT_URL, timeout=10)
         if respuesta.status_code == 200:
-            return respuesta.json()
+            js = respuesta.json()
+            # Si el script viejo devolvió una lista directa en vez de un diccionario modular
+            if isinstance(js, list):
+                return {"precios": js, "instalaciones": []}
+            return js
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
-    return {}
+        pass
+    return {"precios": [], "instalaciones": []}
 
-# Cargar la base de datos actual de Google
+# Cargar datos de forma segura sin romper la app por KeyError
 datos_completos = cargar_datos_desde_google()
 catalogo_precios = datos_completos.get("precios", [])
 historial_edificios = datos_completos.get("instalaciones", [])
 
-# Convertir a Tablas de Python (DataFrames)
+# Convertir a tablas limpias
 df_precios = pd.DataFrame(catalogo_precios) if catalogo_precios else pd.DataFrame(columns=["material", "precio", "unidad"])
 df_historial = pd.DataFrame(historial_edificios) if historial_edificios else pd.DataFrame(columns=["fecha", "edificio", "material", "cantidad", "subtotal"])
 
+# Normalizar columnas por si vienen del script viejo o nuevo
+if not df_precios.empty and "Equipo / Material" in df_precios.columns:
+    df_precios = df_precios.rename(columns={"Equipo / Material": "material", "Precio": "precio", "Unidad": "unidad"})
 
 # =========================================================================
 # MÓDULO 1: INSTALACIÓN NUEVA
 # =========================================================================
 if modulo == "✨ Instalación Nueva":
     st.header("🧰 Módulo: Registro de Instalación Nueva")
-    st.caption("Usa este formulario en terreno para cubicaciones y asignación de equipos a un nuevo condominio.")
     
-    # Formulario Principal integrado en la pantalla
     col_ed, col_fe = st.columns([2, 1])
     with col_ed:
         nombre_edificio = st.text_input("🏢 Nombre del Edificio / Condominio Nuevo:", placeholder="Ej: Condominio Altos del Valle")
@@ -61,23 +66,24 @@ if modulo == "✨ Instalación Nueva":
         col_mat, col_cant, col_btn = st.columns([2, 1, 1])
         
         with col_mat:
-            lista_materiales = df_precios["material"].unique()
+            # Manejo seguro si las llaves se llaman diferente
+            col_nombre = "material" if "material" in df_precios.columns else df_precios.columns[0]
+            lista_materiales = df_precios[col_nombre].unique()
             material_sel = st.selectbox("Seleccione el ítem del catálogo:", lista_materiales)
         with col_cant:
             cantidad_sel = st.number_input("Cantidad:", min_value=1, value=1, step=1)
         with col_btn:
-            st.write("") # Espacio estético
+            st.write("")
             st.write("")
             btn_agregar = st.button("🚀 Añadir Fila")
 
-        # Inicializar el carrito de la sesión si no existe
         if "carrito" not in st.session_state:
             st.session_state.carrito = []
 
         if btn_agregar:
-            # Buscar precio del ítem elegido
-            fila_item = df_precios[df_precios["material"] == material_sel].iloc[0]
-            precio_uni = float(fila_item["precio"])
+            col_precio = "precio" if "precio" in df_precios.columns else df_precios.columns[1]
+            fila_item = df_precios[df_precios[col_nombre] == material_sel].iloc[0]
+            precio_uni = float(fila_item[col_precio])
             st.session_state.carrito.append({
                 "fecha": str(fecha_instalacion),
                 "edificio": nombre_edificio,
@@ -87,12 +93,10 @@ if modulo == "✨ Instalación Nueva":
             })
             st.toast(f"Añadido: {material_sel}")
 
-        # Mostrar tabla del presupuesto actual si tiene ítems
         if st.session_state.carrito:
             st.markdown("### 📋 Resumen de Elementos a Instalar")
             df_actual = pd.DataFrame(st.session_state.carrito)
             
-            # Formatear visualmente para el usuario
             df_vista = df_actual.copy()
             df_vista["subtotal"] = df_vista["subtotal"].apply(lambda x: f"${x:,.0f}")
             st.table(df_vista[["material", "cantidad", "subtotal"]])
@@ -100,7 +104,6 @@ if modulo == "✨ Instalación Nueva":
             total_obra = df_actual["subtotal"].sum()
             st.metric("💰 INVERSIÓN TOTAL ESTIMADA", f"${total_obra:,.0f}")
             
-            # Botones de Acción final
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("🗑️ Limpiar Planilla"):
@@ -115,4 +118,47 @@ if modulo == "✨ Instalación Nueva":
                             payload = {
                                 "accion": "nueva_instalacion",
                                 "edificio": nombre_edificio,
-                                "elementos": st.session
+                                "elementos": st.session_state.carrito
+                            }
+                            try:
+                                envio = requests.post(APPS_SCRIPT_URL, json=payload)
+                                res = envio.json()
+                                if res.get("status") == "success":
+                                    st.success(f"🎉 ¡Éxito! Edificio '{nombre_edificio}' registrado correctamente.")
+                                    st.session_state.carrito = []
+                                else:
+                                    st.error(f"Error: {res.get('message')}")
+                            except Exception as e:
+                                st.error(f"Error de envío: {e}")
+    else:
+        st.warning("⚠️ El catálogo de precios no se pudo leer o está vacío. Revisa que tu Google Sheets tenga datos.")
+
+# =========================================================================
+# MÓDULO 2: BUSCAR / CONSULTAR EDIFICIOS
+# =========================================================================
+elif modulo == "🔍 Buscar/Consultar Edificios":
+    st.header("🔍 Módulo: Consulta de Edificios e Infraestructura")
+    
+    if not df_historial.empty and "edificio" in df_historial.columns:
+        edificios_existentes = df_historial["edificio"].unique()
+        edificio_buscado = st.selectbox("🎯 Selecciona el Edificio que deseas revisar:", edificios_existentes)
+        
+        if edificio_buscado:
+            st.markdown(f"### 🏢 Historial de Equipamiento: **{edificio_buscado}**")
+            df_filtrado = df_historial[df_historial["edificio"] == edificio_buscado]
+            
+            df_filtrado_vista = df_filtrado.copy()
+            df_filtrado_vista["subtotal"] = df_filtrado_vista["subtotal"].apply(lambda x: float(x))
+            df_filtrado_vista["subtotal_format"] = df_filtrado_vista["subtotal"].apply(lambda x: f"${x:,.0f}")
+            
+            st.dataframe(
+                df_filtrado_vista[["fecha", "material", "cantidad", "subtotal_format"]].rename(
+                    columns={"fecha": "📅 Fecha", "material": "🔧 Componente", "cantidad": "📦 Cant.", "subtotal_format": "💰 Subtotal"}
+                ),
+                use_container_width=True
+            )
+            
+            costo_acumulado = df_filtrado_vista["subtotal"].sum()
+            st.metric(label="Valor Total de Infraestructura Instalada", value=f"${costo_acumulado:,.0f}")
+    else:
+        st.info("ℹ️ No hay registros históricos en la pestaña 'Instalaciones' de tu Google Sheets todavía.")
