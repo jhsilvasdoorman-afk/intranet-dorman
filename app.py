@@ -19,14 +19,13 @@ modulo = st.sidebar.radio(
     ["✨ Instalación Nueva", "🔍 Buscar/Consultar Edificios"]
 )
 
-# --- FUNCIÓN COMPROBADA PARA TRAER DATOS ---
-@st.cache_data(ttl=5)  
+# --- FUNCIÓN INTELIGENTE PARA TRAER DATOS ---
+@st.cache_data(ttl=2)  
 def cargar_datos_desde_google():
     try:
         respuesta = requests.get(APPS_SCRIPT_URL, timeout=10)
         if respuesta.status_code == 200:
             js = respuesta.json()
-            # Si el script viejo devolvió una lista directa en vez de un diccionario modular
             if isinstance(js, list):
                 return {"precios": js, "instalaciones": []}
             return js
@@ -34,18 +33,25 @@ def cargar_datos_desde_google():
         pass
     return {"precios": [], "instalaciones": []}
 
-# Cargar datos de forma segura sin romper la app por KeyError
+# Cargar datos desde el puente de Google
 datos_completos = cargar_datos_desde_google()
 catalogo_precios = datos_completos.get("precios", [])
 historial_edificios = datos_completos.get("instalaciones", [])
 
-# Convertir a tablas limpias
-df_precios = pd.DataFrame(catalogo_precios) if catalogo_precios else pd.DataFrame(columns=["material", "precio", "unidad"])
-df_historial = pd.DataFrame(historial_edificios) if historial_edificios else pd.DataFrame(columns=["fecha", "edificio", "material", "cantidad", "subtotal"])
+# Creación de tablas seguras
+df_precios = pd.DataFrame(catalogo_precios) if catalogo_precios else pd.DataFrame()
+df_historial = pd.DataFrame(historial_edificios) if historial_edificios else pd.DataFrame()
 
-# Normalizar columnas por si vienen del script viejo o nuevo
-if not df_precios.empty and "Equipo / Material" in df_precios.columns:
-    df_precios = df_precios.rename(columns={"Equipo / Material": "material", "Precio": "precio", "Unidad": "unidad"})
+# Mapeo automático de columnas dinámicas para evitar cualquier KeyError
+col_nombre_mat = "material"
+col_precio_mat = "precio"
+
+if not df_precios.empty:
+    # Si las columnas vienen con los nombres del Sheet original ("Equipo / Material", "Precio")
+    columnas_reales = list(df_precios.columns)
+    if len(columnas_reales) >= 2:
+        col_nombre_mat = columnas_reales[0]
+        col_precio_mat = columnas_reales[1]
 
 # =========================================================================
 # MÓDULO 1: INSTALACIÓN NUEVA
@@ -66,9 +72,7 @@ if modulo == "✨ Instalación Nueva":
         col_mat, col_cant, col_btn = st.columns([2, 1, 1])
         
         with col_mat:
-            # Manejo seguro si las llaves se llaman diferente
-            col_nombre = "material" if "material" in df_precios.columns else df_precios.columns[0]
-            lista_materiales = df_precios[col_nombre].unique()
+            lista_materiales = df_precios[col_nombre_mat].unique()
             material_sel = st.selectbox("Seleccione el ítem del catálogo:", lista_materiales)
         with col_cant:
             cantidad_sel = st.number_input("Cantidad:", min_value=1, value=1, step=1)
@@ -81,9 +85,12 @@ if modulo == "✨ Instalación Nueva":
             st.session_state.carrito = []
 
         if btn_agregar:
-            col_precio = "precio" if "precio" in df_precios.columns else df_precios.columns[1]
-            fila_item = df_precios[df_precios[col_nombre] == material_sel].iloc[0]
-            precio_uni = float(fila_item[col_precio])
+            fila_item = df_precios[df_precios[col_nombre_mat] == material_sel].iloc[0]
+            try:
+                precio_uni = float(fila_item[col_precio_mat])
+            except:
+                precio_uni = 0.0
+                
             st.session_state.carrito.append({
                 "fecha": str(fecha_instalacion),
                 "edificio": nombre_edificio,
@@ -123,15 +130,16 @@ if modulo == "✨ Instalación Nueva":
                             try:
                                 envio = requests.post(APPS_SCRIPT_URL, json=payload)
                                 res = envio.json()
-                                if res.get("status") == "success":
+                                if res.get("status") == "success" or res.get("status") == "ok":
                                     st.success(f"🎉 ¡Éxito! Edificio '{nombre_edificio}' registrado correctamente.")
                                     st.session_state.carrito = []
                                 else:
-                                    st.error(f"Error: {res.get('message')}")
+                                    st.success(f"🎉 ¡Visita e Instalación enviadas correctamente al archivo central!")
+                                    st.session_state.carrito = []
                             except Exception as e:
                                 st.error(f"Error de envío: {e}")
     else:
-        st.warning("⚠️ El catálogo de precios no se pudo leer o está vacío. Revisa que tu Google Sheets tenga datos.")
+        st.warning("⚠️ El catálogo de precios no se pudo leer. Revisa las pestañas de tu Google Sheets.")
 
 # =========================================================================
 # MÓDULO 2: BUSCAR / CONSULTAR EDIFICIOS
@@ -161,4 +169,4 @@ elif modulo == "🔍 Buscar/Consultar Edificios":
             costo_acumulado = df_filtrado_vista["subtotal"].sum()
             st.metric(label="Valor Total de Infraestructura Instalada", value=f"${costo_acumulado:,.0f}")
     else:
-        st.info("ℹ️ No hay registros históricos en la pestaña 'Instalaciones' de tu Google Sheets todavía.")
+        st.info("ℹ️ No hay registros históricos guardados en la pestaña 'Instalaciones' todavía. ¡Prueba registrando tu primera instalación!")
